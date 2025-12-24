@@ -1,208 +1,106 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8" />
+<meta charset="utf-8">
 <title>Pong Ultra</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-html,body{
-  margin:0;
-  background:#05070d;
-  overflow:hidden;
-  font-family:system-ui, sans-serif;
-  color:white;
-}
+body{margin:0;background:#05070d;color:white;font-family:system-ui}
 canvas{display:block}
-.menu{
-  position:absolute;
-  inset:0;
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  align-items:center;
-  gap:16px;
-  background:radial-gradient(circle at center,#0a0f22,#020308);
-}
-button,input{
-  padding:14px 22px;
-  font-size:18px;
-  border-radius:12px;
-  border:none;
-  background:#1e2bff;
-  color:white;
-}
-button:hover{filter:brightness(1.1)}
-.hidden{display:none}
+.menu{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+button,input{padding:14px 20px;border-radius:12px;border:none;font-size:18px}
 </style>
 </head>
 <body>
 
 <div id="menu" class="menu">
   <h1>PONG ULTRA</h1>
-  <button onclick="startLocal()">Local 2 Player</button>
-  <button onclick="showOnline()">Online</button>
-</div>
-
-<div id="online" class="menu hidden">
-  <button onclick="hostGame()">Host Game</button>
-  <input id="roomInput" placeholder="Room Code"/>
-  <button onclick="joinGame()">Join Game</button>
-  <button onclick="back()">Back</button>
+  <button onclick="local()">Local</button>
+  <button onclick="host()">Host Online</button>
+  <input id="code" placeholder="Room Code">
+  <button onclick="join()">Join</button>
 </div>
 
 <canvas id="c"></canvas>
 
 <script>
-/* ---------------- CORE ---------------- */
+const WS_URL = "free-moth-78.noaheburne-ux.deno.net";
+const c = document.getElementById("c");
+const x = c.getContext("2d");
+resize(); onresize = resize;
 
-const canvas = document.getElementById("c");
-const ctx = canvas.getContext("2d");
-resize(); window.onresize = resize;
+function resize(){c.width=innerWidth;c.height=innerHeight}
 
-function resize(){
-  canvas.width = innerWidth;
-  canvas.height = innerHeight;
-}
-
-/* ---------------- STATE ---------------- */
-
-const STATE = {
-  mode:"menu",
-  players:[],
-  ball:null,
-  time:0
+let socket, room, role;
+let state = {
+  paddles:[{y:200},{y:200}],
+  ball:{x:300,y:200,vx:400,vy:300}
 };
 
-/* ---------------- ENTITIES ---------------- */
-
-function makePaddle(x){
-  return {x,y:canvas.height/2,v:0,ty:0};
+function local(){
+  role="host"; room="local";
+  start();
 }
 
-function resetBall(){
-  return {
-    x:canvas.width/2,
-    y:canvas.height/2,
-    vx:(Math.random()>0.5?1:-1)*420,
-    vy:(Math.random()-.5)*320
+function host(){
+  socket=new WebSocket(WS_URL);
+  socket.onopen=()=>socket.send(JSON.stringify({type:"host"}));
+  socket.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==="room"){room=m.room;alert("Room: "+room)}
+    if(m.type==="start"){role="host";start()}
   };
 }
 
-/* ---------------- GAME SETUP ---------------- */
-
-function startLocal(){
-  STATE.mode="local";
-  STATE.players=[makePaddle(40),makePaddle(canvas.width-40)];
-  STATE.ball=resetBall();
-  hideMenus();
+function join(){
+  socket=new WebSocket(WS_URL);
+  socket.onopen=()=>socket.send(JSON.stringify({type:"join",room:code.value.toUpperCase()}));
+  socket.onmessage=e=>{
+    const m=JSON.parse(e.data);
+    if(m.type==="start"){role="client";start()}
+    if(m.type==="state")state=m.state;
+  };
 }
 
-function showOnline(){
-  document.getElementById("menu").classList.add("hidden");
-  document.getElementById("online").classList.remove("hidden");
+let input={up:false,down:false};
+onkeydown=e=>{if(e.key=="ArrowUp")input.up=true;if(e.key=="ArrowDown")input.down=true};
+onkeyup=e=>{if(e.key=="ArrowUp")input.up=false;if(e.key=="ArrowDown")input.down=false};
+
+function start(){
+  menu.style.display="none";
+  requestAnimationFrame(loop);
 }
-
-function back(){
-  document.getElementById("online").classList.add("hidden");
-  document.getElementById("menu").classList.remove("hidden");
-}
-
-function hideMenus(){
-  document.getElementById("menu").classList.add("hidden");
-  document.getElementById("online").classList.add("hidden");
-}
-
-/* ---------------- INPUT ---------------- */
-
-const keys={};
-addEventListener("keydown",e=>keys[e.key]=1);
-addEventListener("keyup",e=>keys[e.key]=0);
-
-/* ---------------- UPDATE ---------------- */
 
 let last=performance.now();
-function loop(now){
-  const dt=Math.min((now-last)/1000,0.033);
-  last=now;
-  STATE.time+=dt;
-  update(dt);
+function loop(t){
+  const dt=(t-last)/1000; last=t;
+
+  if(role==="host"){
+    if(input.up)state.paddles[0].y-=500*dt;
+    if(input.down)state.paddles[0].y+=500*dt;
+
+    state.ball.x+=state.ball.vx*dt;
+    state.ball.y+=state.ball.vy*dt;
+
+    if(state.ball.y<0||state.ball.y>c.height)state.ball.vy*=-1;
+
+    socket?.send(JSON.stringify({type:"state",room,state}));
+  } else {
+    socket?.send(JSON.stringify({type:"input",room,input}));
+  }
+
   render();
   requestAnimationFrame(loop);
 }
-requestAnimationFrame(loop);
-
-function update(dt){
-  if(STATE.mode==="local"){
-    const [l,r]=STATE.players;
-
-    l.ty += ((keys["w"]?-1:0)+(keys["s"]?1:0))*900*dt;
-    r.ty += ((keys["ArrowUp"]?-1:0)+(keys["ArrowDown"]?1:0))*900*dt;
-
-    l.y += (l.ty-l.y)*10*dt;
-    r.y += (r.ty-r.y)*10*dt;
-
-    const b=STATE.ball;
-    b.x+=b.vx*dt;
-    b.y+=b.vy*dt;
-
-    if(b.y<0||b.y>canvas.height)b.vy*=-1;
-
-    paddleHit(l);
-    paddleHit(r);
-
-    if(b.x<0||b.x>canvas.width)STATE.ball=resetBall();
-  }
-}
-
-/* ---------------- COLLISION ---------------- */
-
-function paddleHit(p){
-  const b=STATE.ball;
-  if(Math.abs(b.x-p.x)<14 && Math.abs(b.y-p.y)<80){
-    b.vx*=-1.05;
-    b.vy+=(b.y-p.y)*6;
-  }
-}
-
-/* ---------------- RENDER ---------------- */
 
 function render(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  // background
-  ctx.fillStyle="rgba(255,255,255,0.02)";
-  for(let i=0;i<40;i++){
-    ctx.fillRect(Math.random()*canvas.width,Math.random()*canvas.height,1,1);
-  }
-
-  if(STATE.mode==="local"){
-    drawPaddle(STATE.players[0]);
-    drawPaddle(STATE.players[1]);
-    drawBall();
-  }
-}
-
-function drawPaddle(p){
-  ctx.fillStyle="#7cf";
-  ctx.fillRect(p.x-6,p.y-60,12,120);
-}
-
-function drawBall(){
-  const b=STATE.ball;
-  ctx.beginPath();
-  ctx.arc(b.x,b.y,8,0,Math.PI*2);
-  ctx.fillStyle="#fff";
-  ctx.fill();
-}
-
-/* ---------------- ONLINE (STUB READY) ---------------- */
-
-let socket=null;
-function hostGame(){
-  alert("Online sync next step – structure ready");
-}
-function joinGame(){
-  alert("Online sync next step – structure ready");
+  x.clearRect(0,0,c.width,c.height);
+  x.fillStyle="#7cf";
+  x.fillRect(40,state.paddles[0].y-60,12,120);
+  x.fillRect(c.width-52,state.paddles[1].y-60,12,120);
+  x.beginPath();
+  x.arc(state.ball.x,state.ball.y,8,0,Math.PI*2);
+  x.fillStyle="#fff"; x.fill();
 }
 </script>
 </body>
